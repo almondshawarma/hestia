@@ -1,0 +1,27 @@
+# ── Core scientific stack ─────────────────────────────────────────────────────
+numpy
+scipy
+matplotlib
+pandas
+
+# ── Notebook ───────────────────────────────────────────────────────────────
+jupyter
+
+# ── Visualization / animation ──────────────────────────────────────────────────
+manim
+
+# ── Instrument control ───────────────────────────────────────────────────────
+puresnmp          # SNMP (MPOD/WIENER mainframes)
+pyserial          # serial comms (SpinCore, embedded devices)
+
+# ── GUI ──────────────────────────────────────────────────────────────────
+# tkinter ships with Python
+
+# ── Project-specific, uncomment as needed ─────────────────────────────────────────
+# influxdb-client   # writing telemetry to InfluxDB (Helios DAQ)
+# gpiozero          # Raspberry Pi GPIO (car DAQ, Pi-based projects)
+# pyzmq             # ZeroMQ messaging (distributed instrument control)
+# h5py              # HDF5 data files (large scientific datasets)
+# lmfit             # curve fitting with parameter bounds (analysis)
+# uncertainties     # error propagation (physics calculations)
+# astropy           # unit handling, constants (nuclear/plasma calculations)

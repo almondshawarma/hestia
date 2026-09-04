@@ -1,0 +1,47 @@
+# Hestia deploy — MQTT broker + IOCs + historian, on the Obelisk.
+# Joins the Helios stack (host Tailscale IP 100.64.10.118). Start small: broker first,
+# then the puck IOC, then the historian.
+#
+#   docker compose -f deploy/docker-compose.yml up -d hestia-mqtt
+#
+# NB Channel Access needs UDP 5064/5065 + TCP 5064 reachable by clients; the IOC uses
+# host networking so CA broadcasts work on the LAN/Tailscale.
+
+name: hestia
+
+services:
+  hestia-mqtt:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "1883:1883"          # MQTT field bus (scope to Hestia via Tailscale ACL)
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - hestia_mqtt_data:/mosquitto/data
+      - hestia_mqtt_log:/mosquitto/log
+
+  hestia-ioc-puck:
+    build: ../ioc
+    image: hestia/ioc:latest
+    restart: unless-stopped
+    network_mode: host        # Channel Access broadcasts need host networking
+    environment:
+      HESTIA_MQTT: "127.0.0.1"
+      HESTIA_MQTT_PORT: "1883"
+    command: ["python", "puck_ioc.py"]
+    depends_on: [hestia-mqtt]
+
+  # hestia-ca2influx:
+  #   build: ../bridge
+  #   restart: unless-stopped
+  #   network_mode: host
+  #   environment:
+  #     HESTIA_INFLUX_URL: "http://127.0.0.1:8086"
+  #     HESTIA_INFLUX_TOKEN: "${HESTIA_INFLUX_TOKEN}"
+  #     HESTIA_INFLUX_ORG: "helios"
+  #     HESTIA_INFLUX_BUCKET: "hestia"
+  #   command: ["python", "ca2influx.py"]
+
+volumes:
+  hestia_mqtt_data:
+  hestia_mqtt_log:

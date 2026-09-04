@@ -1,0 +1,48 @@
+# ── Python ───────────────────────────────────────────────────────────────────
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+.ipynb_checkpoints/
+*.egg-info/
+dist/
+build/
+
+# ── Data (keep raw data local, commit only processed outputs or samples) ──────
+analysis/data/raw/
+*.hdf5
+*.h5
+# Uncomment if CSVs are large; leave commented if they're small reference data:
+# *.csv
+
+# ── Manim render cache ────────────────────────────────────────────────────────
+media/
+
+# ── OS / editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+
+# ── Proprietary design skin (tokens stay private; repo stays runnable on the ───
+#    committed brand_default.py neutral fallback) ─────────────────────────────────
+brand.py
+helios_colors.py
+helios_manim.py
+
+# ── Sensitive / site-specific ─────────────────────────────────────────────────
+*.env
+config_local.py
+calibration_local.py
+# Add instrument IPs, passwords, calibration constants here
+
+# ── Hestia: firmware / control-system artifacts ───────────────────────────────
+secrets.yaml            # ESPHome wifi/mqtt secrets (per firmware/*/); commit secrets.example.yaml
+.esphome/               # ESPHome build cache
+*.acf.local             # site-specific access-security rules
+as_*.sav                # EPICS autosave/restore snapshots
+
+docs/
+visualization/

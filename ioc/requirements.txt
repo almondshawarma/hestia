@@ -1,0 +1,3 @@
+# Hestia IOC layer (the EPICS side). Pure-Python so no EPICS base build needed.
+caproto>=1.1      # Channel Access server (soft IOCs)
+aiomqtt>=2.0      # asyncio MQTT client (field-bus subscribe)

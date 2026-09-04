@@ -1,0 +1,90 @@
+# Hestia : environmental puck (ESP32 + BME280)
+# Rung 0: one puck → MQTT → ioc/puck_ioc.py → Channel Access → Grafana.
+#
+# Per node, change `area` (and `puck_id` if a room has more than one). See docs/NAMING.md.
+# Copy firmware/puck/secrets.example.yaml → secrets.yaml (gitignored) and fill it in.
+#
+# Flash first time over USB (esphome run firmware/puck/puck.yaml), and after that, OTA.
+
+substitutions:
+  area: "LR"          # PV area code : LR, KI, RMA, ...  (docs/NAMING.md)
+  puck_id: "1"        # instance index within the room (bme1, bme2, ...)
+  node_name: "puck-lr"
+
+esphome:
+  name: ${node_name}
+  friendly_name: "Hestia puck ${area}"
+
+esp32:
+  board: esp32dev     # generic ESP32-WROOM DevKit (Elegoo)
+  framework:
+    type: arduino
+
+logger:
+
+# --- OTA for updates without a cable after the first flash ---
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  reboot_timeout: 0s  # keep sensing even if wifi is flaky
+
+# --- MQTT is the Hestia field bus (Mosquitto on the Obelisk) ---
+# ESPHome publishes each reading to:
+#   hestia/<area>/puck<id>/sensor/<name>/state
+# and ioc/puck_ioc.py maps each <name> to a device+signal:
+#   temp/rh/pres -> HES:<AREA>:BME<id>:{TEMP,RH,PRES}
+#   lux          -> HES:<AREA>:LUX<id>:LUX
+#   sound        -> HES:<AREA>:MIC<id>:LVL   (relative until calibrated to dBA)
+mqtt:
+  broker: !secret mqtt_broker
+  topic_prefix: "hestia/${area}/puck${puck_id}"
+  discovery: false
+
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+  frequency: 100kHz
+  scan: true          # logs detected addresses at boot, confirm BME (0x76/0x77) + BH1750 (0x23)
+
+sensor:
+  # --- environment: BME280 (temp / humidity / pressure) ---
+  - platform: bme280_i2c
+    address: 0x76               # some boards are 0x77, check the boot i2c scan
+    update_interval: 30s
+    temperature:
+      name: "temp"
+      # Self-heating offset: the ESP32 warms the board. Measure the steady-state
+      # error vs a reference thermometer and put it here (see calibration/).
+      filters:
+        - offset: 0.0
+    humidity:
+      name: "rh"
+    pressure:
+      name: "pres"
+
+  # --- luminosity: BH1750 (real lux?) ---
+  - platform: bh1750
+    name: "lux"
+    address: 0x23
+    update_interval: 30s
+
+  # --- noise: MAX9814 analog envelope on ADC1 ---
+  # v0 = relative loudness proxy: peak of ~1 s of fast samples. Calibrate to dBA
+  # against an SPL meter later, or swap to an INMP441 I2S mic for true dBA + FFT.
+  - platform: adc
+    pin: GPIO34
+    name: "sound"
+    attenuation: 12db          # full 0–3.3 V range
+    update_interval: 50ms
+    filters:
+      - offset: -1.25          # subtract the mic's DC bias (~1.25 V), tune per module
+      - lambda: return abs(x);
+      - max:
+          window_size: 20      # peak over ~1 s (20 × 50 ms)
+          send_every: 20       # ...published once per second
+
+# TODO (later rungs, same node): SCD40 (co2), LD2410 (presence). Add here and
+# extend ioc/puck_ioc.py's SENSOR_MAP.
