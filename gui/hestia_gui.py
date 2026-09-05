@@ -63,12 +63,16 @@ PVS = [
 ]
 
 
-def _fam(root: tk.Tk, name: str, fallback: str = "Consolas") -> str:
-    """Use the requested font family only if it's actually installed, else fall back."""
+def _fam(root: tk.Tk, *candidates: str) -> str:
+    """First installed family from the candidates (cross-platform), else a Tk default."""
     try:
-        return name if name and name in tkfont.families(root) else fallback
+        installed = set(tkfont.families(root))
     except tk.TclError:
-        return fallback
+        installed = set()
+    for c in candidates:
+        if c and c in installed:
+            return c
+    return candidates[-1] if candidates else "Courier"
 
 
 class App:
@@ -78,8 +82,10 @@ class App:
         self.tiles: dict = {}
         self.decimals = {pv: d for pv, _, _, d in PVS}
 
-        mono = _fam(root, _FONTS.get("mono", ""), "Consolas")
-        disp = _fam(root, _FONTS.get("display", ""), mono)
+        # brand choice first, then cross-platform fallbacks (macOS / Windows / Linux)
+        mono = _fam(root, _FONTS.get("mono", ""),
+                    "IBM Plex Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Courier New")
+        disp = _fam(root, _FONTS.get("display", ""), "Playfair Display", "Georgia", mono)
         f_head = tkfont.Font(family=disp, size=15, weight="bold")
         f_lbl = tkfont.Font(family=mono, size=10)
         f_val = tkfont.Font(family=mono, size=30, weight="bold")

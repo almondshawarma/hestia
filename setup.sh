@@ -22,21 +22,29 @@ else
 fi
 echo
 
-# ── Python check ───────────────────────────────────────────────────────────
-echo "[2/4] Checking Python..."
+# ── Python check (require 3.12 or 3.13) ──────────────────────────────────────
+echo "[2/4] Checking Python (need 3.12 or 3.13)..."
 
-# Prefer python3, fall back to python
-if command -v python3 &>/dev/null; then
-    PYTHON=python3
-elif command -v python &>/dev/null; then
-    PYTHON=python
-else
-    echo "  ERROR: Python not found. Install from https://python.org/"
+# Prefer the newest supported interpreter; the venv permanently inherits whichever
+# one creates it, so picking the right python here pins the whole environment.
+PYTHON=""
+for cand in python3.13 python3.12 python3 python; do
+    if command -v "$cand" &>/dev/null && \
+       "$cand" -c 'import sys; raise SystemExit(0 if (3,12)<=sys.version_info[:2]<(3,14) else 1)' 2>/dev/null; then
+        PYTHON="$cand"; break
+    fi
+done
+
+if [ -z "$PYTHON" ]; then
+    echo "  ERROR: need Python 3.12 or 3.13, none found on PATH."
+    echo "    macOS:   brew install python@3.12    (or python.org 3.12.x/3.13.x installer)"
+    echo "    Ubuntu:  sudo apt install python3.12 python3.12-venv"
+    echo "    then re-run ./setup.sh"
     exit 1
 fi
 
 PYVER=$($PYTHON --version 2>&1 | awk '{print $2}')
-echo "  Found $PYTHON $PYVER"
+echo "  Using $PYTHON ($PYVER)"
 echo
 
 # ── Virtual environment ────────────────────────────────────────────────────
