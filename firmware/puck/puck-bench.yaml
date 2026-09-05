@@ -35,19 +35,24 @@ sensor:
     update_interval: 5s
     temperature:
       name: "temp"
+      id: s_temp
     humidity:
       name: "rh"
+      id: s_rh
     pressure:
       name: "pres"
+      id: s_pres
 
   - platform: bh1750
     name: "lux"
+    id: s_lux
     address: 0x23
     update_interval: 5s
 
   - platform: adc
     pin: GPIO34
     name: "sound"
+    id: s_sound
     attenuation: 12db
     update_interval: 100ms
     filters:
@@ -56,3 +61,13 @@ sensor:
       - max:
           window_size: 10
           send_every: 10     # ~1 s peak
+
+# One clean, parseable line every 2 s for the serial→EPICS bridge (puck_ioc.py --serial COMx).
+# A defined protocol string beats scraping ESPHome's verbose log.
+interval:
+  - interval: 2s
+    then:
+      - lambda: |-
+          ESP_LOGI("puck", "PUCK temp=%.2f rh=%.1f pres=%.1f lux=%.1f sound=%.3f",
+                   id(s_temp).state, id(s_rh).state, id(s_pres).state,
+                   id(s_lux).state, id(s_sound).state);

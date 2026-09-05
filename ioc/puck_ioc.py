@@ -28,6 +28,8 @@ import asyncio
 import math
 import os
 import random
+import re
+import threading
 import time
 
 from caproto.server import PVGroup, pvproperty, run
@@ -168,6 +170,75 @@ async def sim_loop(routes) -> None:
         await asyncio.sleep(2)
 
 
+# --- serial bridge: a USB-attached ESP32 (bench firmware) → EPICS, no network needed ---
+# This is the "IOC per device" pattern where the device speaks serial (cf. EPICS StreamDevice).
+_VERBOSE_RE = re.compile(r"'(?P<name>\w+)'\s*>>\s*(?P<val>-?\d+(?:\.\d+)?)")
+
+
+def _parse_serial_line(line: str) -> list[tuple[str, float]]:
+    """Extract (esphome_name, value) pairs from an ESPHome serial line.
+
+    Two accepted formats:
+      structured (preferred): "PUCK temp=21.00 rh=45.5 pres=1001.2 lux=300.0 sound=0.12"
+      ESPHome VERBOSE log:     "[V][sensor:125]: 'temp' >> 21.0 degC"
+    """
+    out: list[tuple[str, float]] = []
+    if "PUCK " in line:
+        for tok in line.split("PUCK ", 1)[1].split():
+            key, sep, val = tok.partition("=")
+            if sep:
+                try:
+                    fv = float(val)
+                except ValueError:
+                    continue
+                if fv == fv:  # skip NaN (sensor not ready yet)
+                    out.append((key, fv))
+        if out:
+            return out
+    m = _VERBOSE_RE.search(line)
+    if m:
+        out.append((m.group("name"), float(m.group("val"))))
+    return out
+
+
+def _serial_reader(port: str, routes: dict, loop: asyncio.AbstractEventLoop) -> None:
+    """Blocking serial read loop (runs in a thread); marshals PV writes onto the CA loop."""
+    try:
+        import serial  # pyserial
+    except ImportError:
+        print("[serial] pyserial not installed → run: pip install pyserial", flush=True)
+        return
+    area = next(iter(PUCKS)).lower()  # map the serial device to the first configured puck
+    while True:  # survive unplug/replug
+        try:
+            ser = serial.Serial()
+            ser.port = port
+            ser.baudrate = 115200
+            ser.timeout = 1
+            ser.dtr = False  # keep GPIO0 high so the reset-on-open boots the app, not the bootloader
+            ser.rts = False
+            ser.open()
+            print(f"[serial] reading {port} @115200 → HES:{area.upper()}:* PVs", flush=True)
+            while True:
+                raw = ser.readline()
+                if not raw:
+                    continue
+                for name, val in _parse_serial_line(raw.decode(errors="ignore").strip()):
+                    channel = routes.get((area, "puck1", name))
+                    if channel is not None:
+                        asyncio.run_coroutine_threadsafe(channel.write(val), loop)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[serial] {port} error ({exc!r}); retrying in 3s", flush=True)
+            time.sleep(3)
+
+
+def _serial_startup_hook(port: str, routes: dict):
+    async def hook(*_args):
+        loop = asyncio.get_event_loop()
+        threading.Thread(target=_serial_reader, args=(port, routes, loop), daemon=True).start()
+    return hook
+
+
 def _startup_hook(loop_coro, routes):
     """Return an async startup hook that launches the given loop on the server's own loop."""
     async def hook(*_args):
@@ -175,30 +246,35 @@ def _startup_hook(loop_coro, routes):
     return hook
 
 
-def main(sim: bool = False) -> None:
+def main(sim: bool = False, serial_port: str | None = None) -> None:
     routes, pvdb = build_pucks()
     # Default to loopback: caproto must advertise a real, stable IP (never 0.0.0.0), and a
     # single interface avoids the "found on multiple servers" monitor breakage. Override with
     # EPICS_CAS_INTF_ADDR_LIST for networked deployments.
     interfaces = os.environ.get("EPICS_CAS_INTF_ADDR_LIST", "").split() or ["127.0.0.1"]
-    source = "SIM (synthetic)" if sim else f"MQTT {BROKER}:{MQTT_PORT}"
+    if serial_port:
+        source, hook = f"SERIAL {serial_port}", _serial_startup_hook(serial_port, routes)
+    elif sim:
+        source, hook = "SIM (synthetic)", _startup_hook(sim_loop, routes)
+    else:
+        source, hook = f"MQTT {BROKER}:{MQTT_PORT}", _startup_hook(mqtt_loop, routes)
     print(f"[ioc] serving {len(pvdb)} PVs across {len(PUCKS)} area(s); "
           f"source={source}; CA interfaces={interfaces}.", flush=True)
     # caproto's blessed sync runner wires up the asyncio server AND the CA search responder.
-    # The data loop (MQTT or sim) runs as a task on the same loop via the startup hook.
-    loop_coro = sim_loop if sim else mqtt_loop
-    run(pvdb, interfaces=interfaces, startup_hook=_startup_hook(loop_coro, routes))
+    # The data loop (MQTT / sim / serial) is started as a task/thread by the startup hook.
+    run(pvdb, interfaces=interfaces, startup_hook=hook)
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--list-pvs", action="store_true", help="print PV names and exit")
     ap.add_argument("--sim", action="store_true", help="serve synthetic data (no MQTT/hardware)")
+    ap.add_argument("--serial", metavar="PORT", help="read a USB-attached puck (e.g. COM5) instead of MQTT")
     args = ap.parse_args()
     if args.list_pvs:
         print("\n".join(pv_table()))
     else:
         try:
-            main(sim=args.sim)
+            main(sim=args.sim, serial_port=args.serial)
         except KeyboardInterrupt:
             pass

@@ -56,7 +56,7 @@ sensor:
     update_interval: 30s
     temperature:
       name: "temp"
-      # Self-heating offset: the ESP32 warms the board. Measure the steady-state
+      # Self-heating offset: the ESP32 warms the board, so measure the steady-state
       # error vs a reference thermometer and put it here (see calibration/).
       filters:
         - offset: 0.0

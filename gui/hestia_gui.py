@@ -7,12 +7,15 @@ Test the whole EPICS stack on your laptop, offline:
     python gui/hestia_gui.py          # terminal 2: watch them update live
 
 Channel Access is location-transparent, so this also works against the real IOC on the
-Obelisk, just set EPICS_CA_ADDR_LIST to its reachable IP before launching.
+Obelisk : just set EPICS_CA_ADDR_LIST to its reachable IP before launching.
+
 """
 from __future__ import annotations
 
 import os
 import queue
+import threading
+import time
 import tkinter as tk
 from tkinter import font as tkfont
 
@@ -21,6 +24,34 @@ os.environ.setdefault("EPICS_CA_ADDR_LIST", "127.0.0.1")
 os.environ.setdefault("EPICS_CA_AUTO_ADDR_LIST", "no")
 
 from caproto.threading.client import Context  # noqa: E402  (env must be set first)
+
+# ── brand tokens: local override first, committed default otherwise ────────────
+import brand_default as _bd  # noqa: E402
+try:
+    import brand as _b  # noqa: E402  your private Helios skin (gitignored)
+    _PALETTE = {**_bd.PALETTE, **getattr(_b, "PALETTE", {})}
+    _FONTS = {**_bd.FONTS, **getattr(_b, "FONTS", {})}
+    BRAND_SRC = "brand.py"
+except ImportError:
+    _PALETTE, _FONTS, BRAND_SRC = _bd.PALETTE, _bd.FONTS, "brand_default.py"
+
+
+def _mix(a: str, b: str, t: float) -> str:
+    """Blend two #rrggbb colours (t=0 → a, t=1 → b)."""
+    a, b = a.lstrip("#"), b.lstrip("#")
+    ch = [int(a[i:i + 2], 16) + (int(b[i:i + 2], 16) - int(a[i:i + 2], 16)) * t for i in (0, 2, 4)]
+    return "#%02x%02x%02x" % tuple(round(c) for c in ch)
+
+
+# role → concrete UI colours (surface/edge/dim derived from the roles so brand files stay minimal)
+BG = _PALETTE["bg"]
+INK = _PALETTE["ink"]
+ACCENT = _PALETTE["accent"]
+MUTED = _PALETTE["muted"]
+FLOW = _PALETTE["flow"]
+CARD = _mix(BG, INK, 0.06)   # slightly lifted surface
+EDGE = _mix(BG, INK, 0.16)   # hairline border
+DIM = _mix(BG, INK, 0.32)    # faint PV-name text
 
 # (PV name, label, units, decimals)
 PVS = [
@@ -31,9 +62,13 @@ PVS = [
     ("HES:LR:MIC1:LVL", "Sound", "rel", 2),
 ]
 
-# control-room palette
-BG = "#0b0f14"; CARD = "#121a24"; EDGE = "#22303f"
-INK = "#e6ecf5"; MUTED = "#7c8ba0"; DIM = "#3d4c5e"; ACCENT = "#4da3ff"; OK = "#38c07f"
+
+def _fam(root: tk.Tk, name: str, fallback: str = "Consolas") -> str:
+    """Use the requested font family only if it's actually installed, else fall back."""
+    try:
+        return name if name and name in tkfont.families(root) else fallback
+    except tk.TclError:
+        return fallback
 
 
 class App:
@@ -43,15 +78,18 @@ class App:
         self.tiles: dict = {}
         self.decimals = {pv: d for pv, _, _, d in PVS}
 
+        mono = _fam(root, _FONTS.get("mono", ""), "Consolas")
+        disp = _fam(root, _FONTS.get("display", ""), mono)
+        f_head = tkfont.Font(family=disp, size=15, weight="bold")
+        f_lbl = tkfont.Font(family=mono, size=10)
+        f_val = tkfont.Font(family=mono, size=30, weight="bold")
+        f_unit = tkfont.Font(family=mono, size=12)
+        f_pv = tkfont.Font(family=mono, size=8)
+
         root.title("Hestia — Control Room")
         root.configure(bg=BG)
-        f_head = tkfont.Font(family="Consolas", size=12, weight="bold")
-        f_lbl = tkfont.Font(family="Consolas", size=10)
-        f_val = tkfont.Font(family="Consolas", size=30, weight="bold")
-        f_unit = tkfont.Font(family="Consolas", size=12)
-        f_pv = tkfont.Font(family="Consolas", size=8)
 
-        tk.Label(root, text="HESTIA · LIVING ROOM PUCK", fg=ACCENT, bg=BG, font=f_head)\
+        tk.Label(root, text="LIVING ROOM PUCK", fg=ACCENT, bg=BG, font=f_head)\
             .grid(row=0, column=0, columnspan=len(PVS), sticky="w", padx=16, pady=(14, 8))
 
         for i, (pv, name, units, _dec) in enumerate(PVS):
@@ -66,28 +104,34 @@ class App:
             tk.Label(card, text=pv, fg=DIM, bg=CARD, font=f_pv).pack(anchor="w", padx=10, pady=(6, 0))
             self.tiles[pv] = (val, dot)
 
-        self.status = tk.Label(root, text="connecting…", fg=MUTED, bg=BG, font=f_lbl)
+        self.status = tk.Label(root, text=f"connecting…",
+                               fg=MUTED, bg=BG, font=f_lbl)
         self.status.grid(row=2, column=0, columnspan=len(PVS), sticky="w", padx=16, pady=(2, 12))
 
         self._connect()
         self.root.after(150, self._drain)
 
     def _connect(self) -> None:
+        # NB: caproto's THREADING-client monitors don't deliver on Windows (the sync client
+        # behind caget/camonitor is fine). Reads work on both, so we POLL over the persistent
+        # connections on a background thread instead of subscribing to push updates.
         self.ctx = Context()
-        pvobjs = self.ctx.get_pvs(*[p for p, _, _, _ in PVS])
-        self._subs = []  # keep STRONG refs : caproto holds subscriptions/callbacks weakly
-        for pv in pvobjs:
-            sub = pv.subscribe()
-            sub.add_callback(self._make_cb(pv.name))
-            self._subs.append(sub)
+        self.pvs = self.ctx.get_pvs(*[p for p, _, _, _ in PVS])
+        threading.Thread(target=self._poll_loop, daemon=True).start()
 
-    def _make_cb(self, name: str):
-        def cb(sub, response):
+    def _poll_loop(self) -> None:
+        for pv in self.pvs:
             try:
-                self.q.put((name, float(response.data[0])))
+                pv.wait_for_connection(timeout=5)
             except Exception:
                 pass
-        return cb
+        while True:
+            for pv in self.pvs:
+                try:
+                    self.q.put((pv.name, float(pv.read(timeout=2).data[0])))
+                except Exception:
+                    pass
+            time.sleep(1.0)
 
     def _drain(self) -> None:
         got = False
@@ -99,11 +143,11 @@ class App:
                 if tile:
                     val_lbl, dot = tile
                     val_lbl.config(text=f"{value:.{self.decimals.get(name, 1)}f}")
-                    dot.config(fg=OK)
+                    dot.config(fg=FLOW)
         except queue.Empty:
             pass
         if got:
-            self.status.config(text="live · receiving updates", fg=OK)
+            self.status.config(text="live · receiving updates", fg=FLOW)
         self.root.after(150, self._drain)
 
 

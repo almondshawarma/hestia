@@ -1,27 +1,30 @@
-# ── Core scientific stack ─────────────────────────────────────────────────────
+# This is what you can install on YOUR machine to develop + run the tooling locally:
+#   python -m venv venv && venv\Scripts\Activate.ps1     (Windows PowerShell)
+#   pip install -r requirements.txt
+#
+# Firmware flashing uses ESPHome, installed as an isolated CLI tool, not here:
+#   pipx install esphome        (mixing its heavy pinned deps into this env causes conflicts)
+
+# ── EPICS control layer (Channel Access) ──────────────────────────────────────
+caproto>=1.1        # soft IOC + CA clients: the sim IOC (puck_ioc.py --sim) and the GUI
+
+# ── USB serial bridge (plugged-in puck → EPICS, offline) ──────────────────────
+pyserial            # for the planned puck_ioc.py --serial COMx mode
+
+# ── Analysis + calibration notebooks (analysis/, calibration/) ────────────────
 numpy
 scipy
 matplotlib
 pandas
-
-# ── Notebook ───────────────────────────────────────────────────────────────
 jupyter
 
-# ── Visualization / animation ──────────────────────────────────────────────────
+# ── Concept animations for the write-up / video (visualization/) ──────────────
 manim
 
-# ── Instrument control ───────────────────────────────────────────────────────
-puresnmp          # SNMP (MPOD/WIENER mainframes)
-pyserial          # serial comms (SpinCore, embedded devices)
+# ── GUI ───────────────────────────────────────────────────────────────────────
+# tkinter ships with Python — no install needed (used by gui/hestia_gui.py)
 
-# ── GUI ──────────────────────────────────────────────────────────────────
-# tkinter ships with Python
-
-# ── Project-specific, uncomment as needed ─────────────────────────────────────────
-# influxdb-client   # writing telemetry to InfluxDB (Helios DAQ)
-# gpiozero          # Raspberry Pi GPIO (car DAQ, Pi-based projects)
-# pyzmq             # ZeroMQ messaging (distributed instrument control)
-# h5py              # HDF5 data files (large scientific datasets)
-# lmfit             # curve fitting with parameter bounds (analysis)
-# uncertainties     # error propagation (physics calculations)
-# astropy           # unit handling, constants (nuclear/plasma calculations)
+# ── Project-specific, uncomment as needed ─────────────────────────────────────
+# influxdb-client   # only if running the ca2influx bridge outside Docker
+# lmfit             # curve fitting with bounds (calibration)
+# uncertainties     # error propagation (calibration / analysis)
