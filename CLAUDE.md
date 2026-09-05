@@ -30,6 +30,18 @@ USB-attached puck, offline), and default **MQTT** (the deployed path). Read `doc
   **Only Aman deploys.** Don't push changes to the Obelisk or edit `deploy/` expecting to run it
   unless asked. Deploy state + how-it-runs: `docs/DEPLOYMENT.md`.
 
+## Stay in sync — pull Aman's updates at the START of every session
+Aman pushes updates often, and contributors rarely pull on their own — so clones go stale fast,
+and a stale clone re-hits bugs already fixed here or drifts from the conventions below. **Before
+starting any work, sync with the remote:**
+```
+git fetch origin
+git switch main && git pull --ff-only          # get Aman's latest main
+git switch <your-branch> && git rebase main     # replay your work on top (create the branch if new)
+```
+Then re-skim this `CLAUDE.md` if it changed. Syncing first is always cheaper than untangling a
+merge conflict later — when in doubt, `git fetch` and check whether `main` moved.
+
 ## Run it locally (no hardware, no network)
 
 ```
