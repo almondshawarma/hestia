@@ -10,7 +10,7 @@ echo
 cd "$(dirname "$(realpath "$0")")"
 
 # ── Git LFS ────────────────────────────────────────────────────────────────
-echo "[1/4] Checking Git LFS..."
+echo "[1/5] Checking Git LFS..."
 if ! command -v git-lfs &>/dev/null; then
     echo "  WARNING: git-lfs not found."
     echo "  Install: sudo apt install git-lfs  (Ubuntu)"
@@ -22,8 +22,36 @@ else
 fi
 echo
 
+# ── macOS system libs for Manim (pycairo/manimpango have no prebuilt macOS ───
+#    wheels, so pip compiles them from source and needs these on PATH first) ──
+echo "[2/5] Checking Manim's system libraries (macOS)..."
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    MANIM_DEPS=(cairo pkg-config pango ffmpeg)
+    MISSING=()
+    for dep in "${MANIM_DEPS[@]}"; do
+        brew list --versions "$dep" &>/dev/null || MISSING+=("$dep")
+    done
+
+    if [ ${#MISSING[@]} -eq 0 ]; then
+        echo "  cairo, pkg-config, pango, ffmpeg already present."
+    elif command -v brew &>/dev/null; then
+        echo "  Installing missing deps via Homebrew: ${MISSING[*]}"
+        brew install "${MISSING[@]}"
+        echo "  Done."
+    else
+        echo "  ERROR: Homebrew not found, and these are missing: ${MISSING[*]}"
+        echo "    Install Homebrew first: https://brew.sh"
+        echo "    Then:  brew install ${MISSING[*]}"
+        echo "    (Without these, 'pip install manim' fails building pycairo from source.)"
+        exit 1
+    fi
+else
+    echo "  Not macOS, skipping (Linux: apt install pkg-config libcairo2-dev libpango1.0-dev ffmpeg)."
+fi
+echo
+
 # ── Python check (require 3.12 or 3.13) ──────────────────────────────────────
-echo "[2/4] Checking Python (need 3.12 or 3.13)..."
+echo "[3/5] Checking Python (need 3.12 or 3.13)..."
 
 # Prefer the newest supported interpreter; the venv permanently inherits whichever
 # one creates it, so picking the right python here pins the whole environment.
@@ -48,7 +76,7 @@ echo "  Using $PYTHON ($PYVER)"
 echo
 
 # ── Virtual environment ────────────────────────────────────────────────────
-echo "[3/4] Setting up virtual environment..."
+echo "[4/5] Setting up virtual environment..."
 
 if [ -d "venv" ]; then
     echo "  venv already exists, skipping creation."
@@ -75,7 +103,7 @@ fi
 echo
 
 # ── Done ───────────────────────────────────────────────────────────────────
-echo "[4/4] Setup complete."
+echo "[5/5] Setup complete."
 echo
 echo "  Activate venv:   source venv/bin/activate"
 echo "  Deactivate:      deactivate"
