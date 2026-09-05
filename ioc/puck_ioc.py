@@ -25,7 +25,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import math
 import os
+import random
+import time
 
 from caproto.server import PVGroup, pvproperty, run
 
@@ -53,8 +56,8 @@ SENSOR_MAP = {
 
 
 # NB: caproto uses the pvproperty attribute name as the PV suffix, and Channel Access
-# is CASE-SENSITIVE. NAMING.md mandates uppercase suffixes, so pin `name=` explicitly —
-# do NOT rely on the (lowercase) Python attribute name.
+# is CASE-SENSITIVE. NAMING.md mandates uppercase suffixes, so pin `name=` explicitly,
+# so don't not rely on the (lowercase) Python attribute name.
 class Bme(PVGroup):
     """HES:<area>:BME<n>: — environment."""
     temp = pvproperty(value=0.0, name="TEMP", units="degC", precision=2, read_only=True)
@@ -63,12 +66,12 @@ class Bme(PVGroup):
 
 
 class Lux(PVGroup):
-    """HES:<area>:LUX<n>: — illuminance."""
+    """HES:<area>:LUX<n>: - illuminance."""
     lux = pvproperty(value=0.0, name="LUX", units="lx", precision=1, read_only=True)
 
 
 class Mic(PVGroup):
-    """HES:<area>:MIC<n>: — sound level (relative until calibrated → DBA)."""
+    """HES:<area>:MIC<n>: - sound level (relative until calibrated → DBA)."""
     lvl = pvproperty(value=0.0, name="LVL", units="au", precision=0, read_only=True)
 
 
@@ -139,32 +142,63 @@ async def mqtt_loop(routes: dict) -> None:
             await asyncio.sleep(5)
 
 
-def _startup_hook(routes):
-    """Return an async startup hook that launches the MQTT loop on the server's loop."""
+def _sim_value(name: str, t: float) -> float:
+    """Plausible synthetic reading for a sensor, as a function of elapsed seconds."""
+    if name == "temp":
+        return round(21.0 + 1.5 * math.sin(t / 30) + random.uniform(-0.1, 0.1), 2)
+    if name == "rh":
+        return round(45.0 + 6.0 * math.sin(t / 45) + random.uniform(-0.5, 0.5), 1)
+    if name == "pres":
+        return round(1001.0 + 2.0 * math.sin(t / 120), 1)
+    if name == "lux":
+        return round(max(0.0, 300.0 + 250.0 * math.sin(t / 20)), 1)
+    if name == "sound":
+        return round(random.uniform(0.05, 0.9), 2)
+    return 0.0
+
+
+async def sim_loop(routes) -> None:
+    """Drive the PVs with synthetic data, without MQTT or hardware, For local IOC/GUI testing."""
+    print("[ioc] SIM mode: generating synthetic sensor data (no MQTT).", flush=True)
+    t0 = time.monotonic()
+    while True:
+        t = time.monotonic() - t0
+        for (_area, _puck, name), channel in routes.items():
+            await channel.write(_sim_value(name, t))
+        await asyncio.sleep(2)
+
+
+def _startup_hook(loop_coro, routes):
+    """Return an async startup hook that launches the given loop on the server's own loop."""
     async def hook(*_args):
-        asyncio.ensure_future(mqtt_loop(routes))
+        asyncio.ensure_future(loop_coro(routes))
     return hook
 
 
-def main() -> None:
+def main(sim: bool = False) -> None:
     routes, pvdb = build_pucks()
-    interfaces = os.environ.get("EPICS_CAS_INTF_ADDR_LIST", "").split() or None
+    # Default to loopback: caproto must advertise a real, stable IP (never 0.0.0.0), and a
+    # single interface avoids the "found on multiple servers" monitor breakage. Override with
+    # EPICS_CAS_INTF_ADDR_LIST for networked deployments.
+    interfaces = os.environ.get("EPICS_CAS_INTF_ADDR_LIST", "").split() or ["127.0.0.1"]
+    source = "SIM (synthetic)" if sim else f"MQTT {BROKER}:{MQTT_PORT}"
     print(f"[ioc] serving {len(pvdb)} PVs across {len(PUCKS)} area(s); "
-          f"broker {BROKER}:{MQTT_PORT}; CA interfaces={interfaces or 'auto'}.", flush=True)
-    # caproto's blessed sync runner wires up the asyncio server AND the CA search
-    # responder (the manual Context()+gather() pattern did not). The MQTT subscriber
-    # runs as a task on the same loop, started by the startup hook.
-    run(pvdb, interfaces=interfaces, startup_hook=_startup_hook(routes))
+          f"source={source}; CA interfaces={interfaces}.", flush=True)
+    # caproto's blessed sync runner wires up the asyncio server AND the CA search responder.
+    # The data loop (MQTT or sim) runs as a task on the same loop via the startup hook.
+    loop_coro = sim_loop if sim else mqtt_loop
+    run(pvdb, interfaces=interfaces, startup_hook=_startup_hook(loop_coro, routes))
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--list-pvs", action="store_true", help="print PV names and exit")
+    ap.add_argument("--sim", action="store_true", help="serve synthetic data (no MQTT/hardware)")
     args = ap.parse_args()
     if args.list_pvs:
         print("\n".join(pv_table()))
     else:
         try:
-            main()
+            main(sim=args.sim)
         except KeyboardInterrupt:
             pass

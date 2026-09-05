@@ -17,7 +17,7 @@ caproto-monitor HES:LR:BME1:TEMP
 ```
 
 ## Networking notes
-- **MQTT `1883`** is published, so scope it to Hestia contributors with a **Tailscale ACL**but
+- **MQTT `1883`** is published, so scope it to Hestia contributors with a **Tailscale ACL** but
   never expose the personal Helios services to others (see `../docs/ARCHITECTURE.md`).
 - The **IOC uses `network_mode: host`** so Channel Access UDP broadcasts (5064/5065) reach
   clients on the LAN/Tailscale.

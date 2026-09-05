@@ -1,0 +1,58 @@
+# Hestia : puck BENCH TEST (USB serial only; no Wi-Fi / MQTT / OTA).
+# Flash over USB and watch readings on the serial console to validate wiring + sensors
+# BEFORE the network/router is ready. No secrets.yaml needed.
+#
+#   esphome run  firmware/puck/puck-bench.yaml     # flash, then stream serial
+#   esphome logs firmware/puck/puck-bench.yaml     # just watch (already flashed)
+#
+# What to look for:
+#   - boot I2C scan lists 0x76 (BME280) + 0x23 (BH1750)
+#   - breathe on it: 'rh' moves (flat/absent => it's a BMP280, not BME280)
+#   - snap/talk near it: 'sound' jumps
+# When router is up, flash firmware/puck/puck.yaml instead (adds Wi-Fi + MQTT + OTA).
+
+esphome:
+  name: puck-bench
+  friendly_name: "Hestia puck (bench)"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  level: VERBOSE        # sensor "Sending state" lines are VERBOSE in ESPHome 2026.x
+
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+  frequency: 100kHz
+  scan: true            # logs detected I2C addresses at boot
+
+sensor:
+  - platform: bme280_i2c
+    address: 0x76        # change to 0x77 if the boot scan says so
+    update_interval: 5s
+    temperature:
+      name: "temp"
+    humidity:
+      name: "rh"
+    pressure:
+      name: "pres"
+
+  - platform: bh1750
+    name: "lux"
+    address: 0x23
+    update_interval: 5s
+
+  - platform: adc
+    pin: GPIO34
+    name: "sound"
+    attenuation: 12db
+    update_interval: 100ms
+    filters:
+      - offset: -1.05        # measured MAX9814 bias ~1.0V at 3V3; tune to your quiet-room reading
+      - lambda: return abs(x);
+      - max:
+          window_size: 10
+          send_every: 10     # ~1 s peak

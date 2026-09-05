@@ -80,7 +80,7 @@ sensor:
     attenuation: 12db          # full 0–3.3 V range
     update_interval: 50ms
     filters:
-      - offset: -1.65          # subtract the mic's DC bias (~VDD/2 = 1.65 V at 3V3); tune per module
+      - offset: -1.05          # measured MAX9814 bias ~1.0 V at 3V3 (bench-verified); tune per module
       - lambda: return abs(x);
       - max:
           window_size: 20      # peak over ~1 s (20 × 50 ms)
