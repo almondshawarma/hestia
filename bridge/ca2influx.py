@@ -27,6 +27,8 @@ PVS = [
     "HES:LR:BME1:TEMP",
     "HES:LR:BME1:RH",
     "HES:LR:BME1:PRES",
+    "HES:LR:LUX1:LUX",
+    "HES:LR:MIC1:LVL",
 ]
 
 
@@ -50,19 +52,30 @@ def main() -> None:
         measurement, area, device = _parse(pv_name)
 
         def cb(sub, response):
-            (value,) = response.data
-            point = (
-                Point("hestia")
-                .tag("area", area)
-                .tag("device", device)
-                .field(measurement, float(value))
-            )
-            write_api.write(bucket=INFLUX_BUCKET, record=point)
+            try:
+                value = float(response.data[0])
+                point = (
+                    Point("hestia")
+                    .tag("area", area)
+                    .tag("device", device)
+                    .field(measurement, value)
+                )
+                write_api.write(bucket=INFLUX_BUCKET, record=point)
+                print(f"[ca2influx] {pv_name} = {value}", flush=True)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[ca2influx] callback error {pv_name}: {exc!r}", flush=True)
 
         return cb
 
+    # caproto holds subscriptions AND monitor callbacks WEAKLY — anything we don't keep a
+    # strong reference to is garbage-collected and silently stops delivering. Keep both.
+    keepalive = []
     for pv in pvs:
-        pv.subscribe(make_cb(pv.name))
+        cb = make_cb(pv.name)
+        sub = pv.subscribe()          # returns a Subscription; register via add_callback
+        sub.add_callback(cb)
+        keepalive.append((sub, cb))
+    main._keepalive = keepalive  # extra strong ref, defensive
 
     print(f"[ca2influx] archiving {len(pvs)} PVs → {INFLUX_URL} bucket={INFLUX_BUCKET}")
     try:

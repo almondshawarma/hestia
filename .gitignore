@@ -43,6 +43,7 @@ secrets.yaml            # ESPHome wifi/mqtt secrets (per firmware/*/); commit se
 .esphome/               # ESPHome build cache
 *.acf.local             # site-specific access-security rules
 as_*.sav                # EPICS autosave/restore snapshots
+docker-compose.override.yml   # host-local deploy overrides (see docs/DEPLOYMENT.md)
 
 docs/
 visualization/

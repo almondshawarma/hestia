@@ -14,7 +14,9 @@ services:
     image: eclipse-mosquitto:2
     restart: unless-stopped
     ports:
-      - "1883:1883"          # MQTT field bus (scope to Hestia via Tailscale ACL)
+      # Loopback only by default (Velocity is a managed/shared subnet). Change to the
+      # router-LAN IP once you have your own router — see docs/DEPLOYMENT.md "Going live".
+      - "127.0.0.1:1883:1883"
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - hestia_mqtt_data:/mosquitto/data

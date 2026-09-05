@@ -27,8 +27,7 @@ import argparse
 import asyncio
 import os
 
-from caproto.asyncio.server import Context
-from caproto.server import PVGroup, pvproperty
+from caproto.server import PVGroup, pvproperty, run
 
 # --- configuration -----------------------------------------------------------
 PREFIX = "HES"
@@ -53,21 +52,24 @@ SENSOR_MAP = {
 }
 
 
+# NB: caproto uses the pvproperty attribute name as the PV suffix, and Channel Access
+# is CASE-SENSITIVE. NAMING.md mandates uppercase suffixes, so pin `name=` explicitly —
+# do NOT rely on the (lowercase) Python attribute name.
 class Bme(PVGroup):
     """HES:<area>:BME<n>: — environment."""
-    temp = pvproperty(value=0.0, units="degC", precision=2, read_only=True)
-    rh = pvproperty(value=0.0, units="%", precision=1, read_only=True)
-    pres = pvproperty(value=0.0, units="hPa", precision=1, read_only=True)
+    temp = pvproperty(value=0.0, name="TEMP", units="degC", precision=2, read_only=True)
+    rh = pvproperty(value=0.0, name="RH", units="%", precision=1, read_only=True)
+    pres = pvproperty(value=0.0, name="PRES", units="hPa", precision=1, read_only=True)
 
 
 class Lux(PVGroup):
     """HES:<area>:LUX<n>: — illuminance."""
-    lux = pvproperty(value=0.0, units="lx", precision=1, read_only=True)
+    lux = pvproperty(value=0.0, name="LUX", units="lx", precision=1, read_only=True)
 
 
 class Mic(PVGroup):
     """HES:<area>:MIC<n>: — sound level (relative until calibrated → DBA)."""
-    lvl = pvproperty(value=0.0, units="au", precision=0, read_only=True)
+    lvl = pvproperty(value=0.0, name="LVL", units="au", precision=0, read_only=True)
 
 
 DEVICE_CLASSES = {"BME": Bme, "LUX": Lux, "MIC": Mic}
@@ -137,11 +139,22 @@ async def mqtt_loop(routes: dict) -> None:
             await asyncio.sleep(5)
 
 
-async def main() -> None:
+def _startup_hook(routes):
+    """Return an async startup hook that launches the MQTT loop on the server's loop."""
+    async def hook(*_args):
+        asyncio.ensure_future(mqtt_loop(routes))
+    return hook
+
+
+def main() -> None:
     routes, pvdb = build_pucks()
-    ctx = Context(pvdb)
-    print(f"[ioc] serving {len(pvdb)} PVs across {len(PUCKS)} area(s). Broker {BROKER}:{MQTT_PORT}.")
-    await asyncio.gather(ctx.run(), mqtt_loop(routes))
+    interfaces = os.environ.get("EPICS_CAS_INTF_ADDR_LIST", "").split() or None
+    print(f"[ioc] serving {len(pvdb)} PVs across {len(PUCKS)} area(s); "
+          f"broker {BROKER}:{MQTT_PORT}; CA interfaces={interfaces or 'auto'}.", flush=True)
+    # caproto's blessed sync runner wires up the asyncio server AND the CA search
+    # responder (the manual Context()+gather() pattern did not). The MQTT subscriber
+    # runs as a task on the same loop, started by the startup hook.
+    run(pvdb, interfaces=interfaces, startup_hook=_startup_hook(routes))
 
 
 if __name__ == "__main__":
@@ -152,6 +165,6 @@ if __name__ == "__main__":
         print("\n".join(pv_table()))
     else:
         try:
-            asyncio.run(main())
+            main()
         except KeyboardInterrupt:
             pass
