@@ -1,0 +1,30 @@
+Component,Pin,Function,ESP32 Pin,Notes
+LCD (HD44780 16x2, 4-bit mode),VSS,Ground,GND,
+LCD (HD44780 16x2, 4-bit mode),VDD,Power Supply,5V (VIN),
+LCD (HD44780 16x2, 4-bit mode),V0,Contrast Adjustment,Potentiometer Wiper,Alt: GND via 1k resistor
+LCD (HD44780 16x2, 4-bit mode),RS,Register Select,GPIO33,Moved off GPIO12 (ESP32 strapping pin / flash voltage) to avoid boot issues
+LCD (HD44780 16x2, 4-bit mode),RW,Read/Write,GND,Tied low - write mode only
+LCD (HD44780 16x2, 4-bit mode),E,Enable,GPIO13,
+LCD (HD44780 16x2, 4-bit mode),D0,Data Bit 0,Not Connected,Unused in 4-bit mode
+LCD (HD44780 16x2, 4-bit mode),D1,Data Bit 1,Not Connected,Unused in 4-bit mode
+LCD (HD44780 16x2, 4-bit mode),D2,Data Bit 2,Not Connected,Unused in 4-bit mode
+LCD (HD44780 16x2, 4-bit mode),D3,Data Bit 3,Not Connected,Unused in 4-bit mode
+LCD (HD44780 16x2, 4-bit mode),D4,Data Bit 4,GPIO14,
+LCD (HD44780 16x2, 4-bit mode),D5,Data Bit 5,GPIO27,
+LCD (HD44780 16x2, 4-bit mode),D6,Data Bit 6,GPIO26,
+LCD (HD44780 16x2, 4-bit mode),D7,Data Bit 7,GPIO25,
+LCD (HD44780 16x2, 4-bit mode),BL+,Backlight Power,5V,Alt: 3.3V via 220 ohm resistor
+LCD (HD44780 16x2, 4-bit mode),BL-,Backlight Ground,GND,
+BME280,VCC,Power Supply,3.3V,CONFIRM actual rail used
+BME280,GND,Ground,GND,
+BME280,SCL,I2C Clock,GPIO22,Shared I2C bus (bus master leg)
+BME280,SDA,I2C Data,GPIO21,Shared I2C bus (bus master leg)
+BH1750,VCC,Power Supply,3.3V,CONFIRM actual rail used
+BH1750,GND,Ground,GND,
+BH1750,SCL,I2C Clock,GPIO22,Daisy-chained to BME280 SCL - shared bus
+BH1750,SDA,I2C Data,GPIO21,Daisy-chained to BME280 SDA - shared bus
+MAX9814,VDD,Power Supply,TBD,CONFIRM - typically 3.3V or 5V
+MAX9814,GND,Ground,GND,
+MAX9814,OUT,Analog Audio Output,GPIO34,Matches firmware/puck/puck.yaml + puck-bench.yaml (ADC1_CH6, input-only)
+MAX9814,GAIN,Gain Select,TBD,CONFIRM wiring (floating/GND/VDD sets 60/50/40 dB)
+MAX9814,A/R,Attack/Release Select,TBD,CONFIRM wiring (floating/GND/VDD sets ratio)
