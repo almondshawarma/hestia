@@ -1,0 +1,154 @@
+# ESPHome config for an HD44780 16x2 character LCD (the ubiquitous blue/green
+# parallel display), driven in 4-bit mode via lcd_gpio. Wired per hardware_pinout.csv:
+#   RS=GPIO33  E=GPIO13  D4=GPIO14  D5=GPIO27  D6=GPIO26  D7=GPIO25  RW->GND (write-only)
+# Sensor wiring (BME280 on I2C, MAX9814 on ADC) copied from puck-bench.yaml so the
+# display lambda can read sensor state directly on-device — see lcd.md's "future
+# plan" for why this stays off the MQTT/Channel Access path. BH1750 (lux) is
+# physically removed for now — it had a deeper hardware issue beyond the SDA short
+# that took down the whole bus; re-add its sensor: block once that's sorted.
+#
+#   esphome run firmware/puck/matthews_puck/lcd-test.yaml --device /dev/cu.usbserial-0001
+#
+# Row 0: kaomoji mood, driven by temperature only (displayed + thresholded in
+# Fahrenheit), 5 states symmetric around the measured ~72F self-heated baseline:
+# dead-cold / cold / default / hot / dead-hot. Both "dead" ends reuse the same
+# (✖︿✖) face since only one death kaomoji was designed — swap in a distinct
+# freeze face later if wanted. Bands are tight (4F steps) so breathing on the
+# sensor or cupping it in your palms (skin ~98F) swings the mood within a couple
+# of ticks. Row 1: condensed live numbers, e.g. "72F 45% 0.12s" (temp F, RH%,
+# raw filtered sound level — still uncalibrated arbitrary units, no dBA yet),
+# re-centered every tick since digit count changes. update_interval: 5s is the
+# floor on how often either row can change, per spec.
+#
+# CALIBRATION: measured idle baseline was 22C (~72F self-heated, vs. a ~70F/21C
+# room — see CLAUDE.md's BME280 self-heating gotcha). If your idle reading
+# drifts, shift DEATH_COLD/COLD_MAX/HOT_MIN/DEATH_HOT in the lambda below by the
+# same amount so "Default" still centers on the real baseline.
+
+esphome:
+  name: puck-lcd-test
+  friendly_name: "Hestia puck (LCD test)"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  level: INFO
+
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+  frequency: 100kHz
+  scan: true
+
+sensor:
+  - platform: bme280_i2c
+    address: 0x76        # change to 0x77 if the boot scan says so
+    update_interval: 2s   # faster than the 5s display tick so state is always fresh when read
+    temperature:
+      name: "temp"
+      id: s_temp
+    humidity:
+      name: "rh"
+      id: s_rh
+    pressure:
+      name: "pres"
+      id: s_pres
+
+  - platform: adc
+    pin: GPIO34
+    name: "sound"
+    id: s_sound
+    attenuation: 12db
+    update_interval: 100ms
+    filters:
+      - offset: -1.05        # measured MAX9814 bias ~1.0V at 3V3; tune to your quiet-room reading
+      - lambda: return abs(x);
+      - max:
+          window_size: 10
+          send_every: 10
+
+# One clean, parseable line every 2s for the serial->EPICS bridge (puck_ioc.py --serial),
+# kept alongside the on-device LCD reactivity so both paths work off the same sensors.
+interval:
+  - interval: 2s
+    then:
+      - lambda: |-
+          ESP_LOGI("puck", "PUCK temp=%.2f rh=%.1f pres=%.1f sound=%.3f",
+                   id(s_temp).state, id(s_rh).state, id(s_pres).state,
+                   id(s_sound).state);
+
+display:
+  - platform: lcd_gpio
+    id: lcd
+    dimensions: 16x2
+    rs_pin: GPIO33
+    enable_pin: GPIO13
+    data_pins:
+      - GPIO14   # D4
+      - GPIO27   # D5
+      - GPIO26   # D6
+      - GPIO25   # D7
+    update_interval: 5s
+    # CGRAM has 8 slots total (0-7); slot 0 is skipped everywhere because \x00 would
+    # null-terminate the C string in it.print(). Slots are reloaded per-face via
+    # it.loadchar() (the only mutation API this component exposes — no create_char),
+    # not via user_characters:, since that key only loads once at boot.
+    lambda: |-
+      float c = id(s_temp).state;
+      float f = c * 9.0f / 5.0f + 32.0f;
+
+      // Symmetric bands around the measured ~72F self-heated baseline. See the
+      // CALIBRATION note at the top of this file before retuning.
+      const float DEATH_COLD = 66.0f;
+      const float COLD_MAX   = 70.0f;
+      const float HOT_MIN    = 74.0f;
+      const float DEATH_HOT  = 78.0f;
+
+      if (f < DEATH_COLD) {
+        // Dead (too cold): ( ✖ ︿ ✖ )
+        uint8_t xeye[8]    = {0b10001,0b01010,0b00100,0b01010,0b10001,0b00000,0b00000,0b00000};
+        uint8_t chevron[8] = {0b00000,0b00000,0b00100,0b01010,0b10001,0b00000,0b00000,0b00000};
+        it.loadchar(1, xeye);
+        it.loadchar(2, chevron);
+        it.print(3, 0, "( \x01 \x02 \x01 )");
+      } else if (f < COLD_MAX) {
+        // Getting cold: (> ︿ < ❄ )
+        uint8_t chevron[8] = {0b00000,0b00000,0b00100,0b01010,0b10001,0b00000,0b00000,0b00000};
+        uint8_t snow[8]    = {0b00100,0b10101,0b01110,0b11111,0b01110,0b10101,0b00100,0b00000};
+        it.loadchar(1, chevron);
+        it.loadchar(2, snow);
+        it.print(3, 0, "(> \x01 < \x02 )");
+      } else if (f < HOT_MIN) {
+        // Default: \( •̀ ᗜ •́ )/
+        uint8_t eye_l[8] = {0b01000,0b00100,0b00000,0b00000,0b01110,0b01110,0b00000,0b00000};
+        uint8_t mouth[8] = {0b00000,0b00000,0b00000,0b10001,0b10001,0b10001,0b01110,0b00000};
+        uint8_t eye_r[8] = {0b00100,0b01000,0b00000,0b00000,0b01110,0b01110,0b00000,0b00000};
+        it.loadchar(1, eye_l);
+        it.loadchar(2, mouth);
+        it.loadchar(3, eye_r);
+        it.print(2, 0, "\\( \x01 \x02 \x03 )/");
+      } else if (f < DEATH_HOT) {
+        // Getting hot: L( ᗒᗣᗕ L) — dazed/heat-exhausted eyes + zigzag mouth
+        uint8_t spiral[8] = {0b01110,0b10001,0b10101,0b01110,0b00100,0b00000,0b00000,0b00000};
+        uint8_t bowtie[8] = {0b00000,0b00000,0b10001,0b01010,0b00100,0b01010,0b10001,0b00000};
+        it.loadchar(1, spiral);
+        it.loadchar(2, bowtie);
+        it.print(3, 0, "L( \x01\x02\x01 L)");
+      } else {
+        // Dead (too hot): ( ✖ ︿ ✖ )
+        uint8_t xeye[8]    = {0b10001,0b01010,0b00100,0b01010,0b10001,0b00000,0b00000,0b00000};
+        uint8_t chevron[8] = {0b00000,0b00000,0b00100,0b01010,0b10001,0b00000,0b00000,0b00000};
+        it.loadchar(1, xeye);
+        it.loadchar(2, chevron);
+        it.print(3, 0, "( \x01 \x02 \x01 )");
+      }
+
+      char buf[17];
+      snprintf(buf, sizeof(buf), "%.0fF %.0f%% %.2fs", f, id(s_rh).state, id(s_sound).state);
+      int len = strlen(buf);
+      int col = (16 - len) / 2;
+      if (col < 0) col = 0;
+      it.print(col, 1, buf);
