@@ -19,7 +19,7 @@ Usage
 -----
     pip install -r requirements.txt
     python puck_ioc.py --list-pvs          # print the PV table and exit
-    HESTIA_MQTT=100.64.10.118 python puck_ioc.py
+    HESTIA_MQTT=<broker-host> python puck_ioc.py
 """
 from __future__ import annotations
 
@@ -41,7 +41,8 @@ MQTT_PORT = int(os.environ.get("HESTIA_MQTT_PORT", "1883"))
 
 # area code -> number of pucks in that area (see docs/NAMING.md)
 PUCKS: dict[str, int] = {
-    "LR": 1,
+    "LR": 1,       # kept for local --sim / GUI dev
+    "RMB": 1,      # bedroom B — first real puck
     # "KI": 1,
     # "RMA": 1,
 }

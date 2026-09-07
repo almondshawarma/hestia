@@ -29,6 +29,11 @@ PVS = [
     "HES:LR:BME1:PRES",
     "HES:LR:LUX1:LUX",
     "HES:LR:MIC1:LVL",
+    "HES:RMB:BME1:TEMP",
+    "HES:RMB:BME1:RH",
+    "HES:RMB:BME1:PRES",
+    "HES:RMB:LUX1:LUX",
+    "HES:RMB:MIC1:LVL",
 ]
 
 

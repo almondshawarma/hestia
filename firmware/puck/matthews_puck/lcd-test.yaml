@@ -37,6 +37,22 @@ esp32:
 logger:
   level: INFO
 
+# --- ADDED: report to the Helios homelab over the Mango LAN. Purely additive — the
+# display / sensors / face lambda below are untouched, so the LCD keeps working exactly
+# as before (and still works offline, since reboot_timeout is 0s). ---
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  reboot_timeout: 0s          # keep the face alive even if WiFi drops
+
+ota:
+  - platform: esphome
+
+mqtt:
+  broker: !secret mqtt_broker            # the Obelisk on the Mango LAN (192.168.8.10)
+  topic_prefix: "hestia/LR/puck1"        # -> HES:LR:BME1:{TEMP,RH,PRES} + MIC1:LVL
+  discovery: false                       # (no lux: BH1750 removed, so HES:LR:LUX1 stays idle)
+
 i2c:
   sda: GPIO21
   scl: GPIO22

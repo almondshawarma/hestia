@@ -13,7 +13,7 @@ Caproto **soft IOCs**, one per device class. Each subscribes to the MQTT field b
 ```bash
 pip install -r requirements.txt
 python puck_ioc.py --list-pvs                 # sanity-check the namespace
-HESTIA_MQTT=100.64.10.118 python puck_ioc.py  # serve
+HESTIA_MQTT=<broker-host> python puck_ioc.py  # serve
 ```
 
 ## Verify from another shell (EPICS clients, or caproto's)

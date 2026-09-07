@@ -1,5 +1,5 @@
 # Hestia deploy — MQTT broker + IOCs + historian, on the Obelisk.
-# Joins the Helios stack (host Tailscale IP 100.64.10.118). Start small: broker first,
+# Joins the Helios stack (on the host's Tailscale IP). Start small: broker first,
 # then the puck IOC, then the historian.
 #
 #   docker compose -f deploy/docker-compose.yml up -d hestia-mqtt

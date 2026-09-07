@@ -7,9 +7,9 @@
 # Flash first time over USB (esphome run firmware/puck/puck.yaml), and after that, OTA.
 
 substitutions:
-  area: "LR"          # PV area code : LR, KI, RMA, ...  (docs/NAMING.md)
+  area: "RMB"         # PV area code : LR, KI, RMA, RMB(bedroom B), ...  (docs/NAMING.md)
   puck_id: "1"        # instance index within the room (bme1, bme2, ...)
-  node_name: "puck-lr"
+  node_name: "puck-rmb"
 
 esphome:
   name: ${node_name}
