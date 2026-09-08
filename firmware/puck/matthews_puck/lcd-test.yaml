@@ -15,10 +15,14 @@
 # (✖︿✖) face since only one death kaomoji was designed — swap in a distinct
 # freeze face later if wanted. Bands are tight (4F steps) so breathing on the
 # sensor or cupping it in your palms (skin ~98F) swings the mood within a couple
-# of ticks. Row 1: condensed live numbers, e.g. "72F 45% 0.12s" (temp F, RH%,
-# raw filtered sound level — still uncalibrated arbitrary units, no dBA yet),
-# re-centered every tick since digit count changes. update_interval: 5s is the
-# floor on how often either row can change, per spec.
+# of ticks. Row 1: condensed live numbers + wall clock, e.g. "72F 45% 14:07"
+# (temp F, RH%, HH:MM from SNTP), re-centered every tick since digit count changes.
+# update_interval: 5s is the floor on how often either row normally changes.
+#
+# Whenever the published sound level clears 0.75 (same arbitrary
+# units it used to show on row 1), a 350ms interval latches an alarm and the display
+# takes over the whole screen to flash "SHUT UP!!!" until it quiets down. No need to 
+# thank us, neighbours!
 #
 # CALIBRATION: measured idle baseline was 22C (~72F self-heated, vs. a ~70F/21C
 # room — see CLAUDE.md's BME280 self-heating gotcha). If your idle reading
@@ -52,6 +56,25 @@ mqtt:
   broker: !secret mqtt_broker            # the Obelisk on the Mango LAN (192.168.8.10)
   topic_prefix: "hestia/LR/puck1"        # -> HES:LR:BME1:{TEMP,RH,PRES} + MIC1:LVL
   discovery: false                       # (no lux: BH1750 removed, so HES:LR:LUX1 stays idle)
+
+# wall-clock, SNTP needs the puck's router to have internet 
+# now() is NaN-safe, and .is_valid() is false until the first sync, 
+# the display falls back to "--:--".
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: America/Chicago            # LR puck is US Central; edit if the puck moves
+
+# latch + blink phase for the "SHUT UP!!!" loud-noise flash, just additive to the face logic
+globals:
+  - id: g_alarm
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: g_blink
+    type: bool
+    restore_value: no
+    initial_value: 'false'
 
 i2c:
   sda: GPIO21
@@ -96,6 +119,23 @@ interval:
                    id(s_temp).state, id(s_rh).state, id(s_pres).state,
                    id(s_sound).state);
 
+  # loud-noise flash driver, when the published sound level clears 0.75 (same
+  # arbitrary units shown on-screen), latch the alarm and toggle the blink phase every
+  # 350ms, forcing an immediate LCD redraw so "SHUT UP!!!" flashes fast instead of on the
+  # 5s tick, and when it falls back under, unlatch and redraw once to restore the face
+  - interval: 350ms
+    then:
+      - lambda: |-
+          if (id(s_sound).state > 0.75f) {           // NaN before first reading -> false
+            id(g_alarm) = true;
+            id(g_blink) = !id(g_blink);
+            id(lcd).update();
+          } else if (id(g_alarm)) {
+            id(g_alarm) = false;
+            id(g_blink) = false;
+            id(lcd).update();
+          }
+
 display:
   - platform: lcd_gpio
     id: lcd
@@ -113,6 +153,18 @@ display:
     # it.loadchar() (the only mutation API this component exposes — no create_char),
     # not via user_characters:, since that key only loads once at boot.
     lambda: |-
+      // Loud-noise override, while the alarm is latched (see the 350ms interval),
+      // take over the whole screen and flash "SHUT UP!!!", on-phase prints it centered on
+      // both rows, off-phase prints nothing (the buffer is blanked each cycle).
+      // Return before any face/sensor drawing.
+      if (id(g_alarm)) {
+        if (id(g_blink)) {
+          it.print(3, 0, "SHUT UP!!!");   // 10 chars -> centered at col (16-10)/2 = 3
+          it.print(3, 1, "SHUT UP!!!");
+        }
+        return;
+      }
+
       float c = id(s_temp).state;
       float f = c * 9.0f / 5.0f + 32.0f;
 
@@ -162,8 +214,15 @@ display:
         it.print(3, 0, "( \x01 \x02 \x01 )");
       }
 
+      // Row 1: temp F, RH%, and the wall clock (HH:MM). The raw sound number that used to
+      // be here moved out to make room for the clock, sound now drives the SHUT UP flash
+      // above (and still logs / publishes over MQTT), "--:--"
+      // until SNTP gets its first sync.
+      std::string hhmm = "--:--";
+      auto now = id(sntp_time).now();
+      if (now.is_valid()) hhmm = now.strftime("%H:%M");
       char buf[17];
-      snprintf(buf, sizeof(buf), "%.0fF %.0f%% %.2fs", f, id(s_rh).state, id(s_sound).state);
+      snprintf(buf, sizeof(buf), "%.0fF %.0f%% %s", f, id(s_rh).state, hhmm.c_str());
       int len = strlen(buf);
       int col = (16 - len) / 2;
       if (col < 0) col = 0;
