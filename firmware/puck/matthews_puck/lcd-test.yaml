@@ -56,6 +56,7 @@ wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   reboot_timeout: 0s          # keep the face alive even if WiFi drops
+  power_save_mode: none
 
 ota:
   - platform: esphome
