@@ -92,6 +92,43 @@ Centering an N-character string on the 16-column display: start column = `(16 - 
      USB-serial adapter did **not** reset the chip (it's powered from a separate rail, so only
      the data connection bounced, not the MCU itself).
 
+## Temporary messages over EPICS
+
+Flashing text on the LCD is a **PV write**, not a raw MQTT publish — the whole point of Hestia is
+that devices are spoken for as process variables. The puck IOC (`ioc/puck_ioc.py`) serves the LCD
+as its own logical device (peer to `BME1`/`MIC1` on the same ESP32 — EPICS names by *function*,
+not by board):
+
+- `HES:LR:LCD1:MSG`  : **write** the text to display (a string PV).
+- `HES:LR:LCD1:STAT` : **read** back what the puck reports it is showing (`IDLE` when cleared).
+
+Data flow: `caput MSG` → IOC's `Lcd.msg` putter republishes to MQTT `hestia/LR/puck1/msg` → this
+firmware's `on_message` latches it and takes over the LCD for ~10s (row 0 = first 16 chars, row 1
+= next 16), then the face returns. Re-write to refresh the hold; write an empty string to clear.
+The firmware echoes what's on screen to `hestia/LR/puck1/msg/state`, which the IOC routes back to
+`STAT` — the `:VAL`/`:RBV` "never trust a command without the readback" convention (`docs/NAMING.md`).
+This override sits **above** the `SHUT UP!!!` loud-noise flash, so a pushed message wins even in a
+loud room. Firmware side: `g_msg` / `g_msg_until` globals, `mqtt: on_message:` (+ the `mqtt_client`
+id used to publish the echo), a 500ms expiry interval, and a block at the top of the display lambda.
+
+Sending (an ESP32 can't speak Channel Access, so MQTT stays the last hop to the device, but you
+never touch it directly):
+
+```
+python tools/puck_msg.py "hello matthew"      # ergonomic helper (uses the caproto library)
+python tools/puck_msg.py --clear              # wipe it now
+caput HES:LR:LCD1:MSG "hello matthew"         # if you have EPICS base
+caget HES:LR:LCD1:STAT                        # readback: what's actually showing
+```
+
+Note: caproto's *put CLI* (`python -m caproto.commandline.put`) runs `ast.literal_eval` on the
+value, so a plain string errors — you'd have to write `"'hello matthew'"`. `tools/puck_msg.py`
+uses the caproto *library* `write()` instead, which takes the text directly. Point the client at
+the IOC with `EPICS_CA_ADDR_LIST` if it isn't on localhost.
+
+This needs one firmware flash to land the subscribe + echo (OTA from a machine on the puck's router
+LAN, or serial). After that it's pure PV writes, so no reflash ever again.
+
 ## Future plan: sensor-reactive "tamagotchi" face
 
 Goal (from Matthew): drive the LCD's expression from the puck's own live environment readings

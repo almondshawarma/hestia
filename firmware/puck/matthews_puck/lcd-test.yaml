@@ -19,10 +19,18 @@
 # (temp F, RH%, HH:MM from SNTP), re-centered every tick since digit count changes.
 # update_interval: 5s is the floor on how often either row normally changes.
 #
-# Whenever the published sound level clears 0.75 (same arbitrary
+# Whenever the published sound level clears 0.85 (same arbitrary
 # units it used to show on row 1), a 350ms interval latches an alarm and the display
-# takes over the whole screen to flash "SHUT UP!!!" until it quiets down. No need to 
+# takes over the whole screen to flash "SHUT UP!!!" until it quiets down. No need to
 # thank us, neighbours!
+#
+# TEMPORARY MESSAGES (EPICS): flash text on the LCD by writing the PV HES:LR:LCD1:MSG, then the puck
+# IOC republishes it to MQTT "hestia/LR/puck1/msg", which this config subscribes to. It takes over
+# the whole LCD for ~10s (row 0 = first 16 chars, row 1 = next 16), then the face returns; re-write
+# to refresh, write an empty string to clear. The puck echoes what's shown to ".../msg/state" so
+# HES:LR:LCD1:STAT reads it back (the :VAL/:RBV convention). This override sits ABOVE the loud-noise
+# flash, so a pushed message wins even in a loud room.
+#   caput HES:LR:LCD1:MSG "hello matthew"        (or python tools/puck_msg.py "hello matthew"; see lcd.md)
 #
 # CALIBRATION: measured idle baseline was 22C (~72F self-heated, vs. a ~70F/21C
 # room — see CLAUDE.md's BME280 self-heating gotcha). If your idle reading
@@ -56,6 +64,20 @@ mqtt:
   broker: !secret mqtt_broker            # the Obelisk on the Mango LAN (192.168.8.10)
   topic_prefix: "hestia/LR/puck1"        # -> HES:LR:BME1:{TEMP,RH,PRES} + MIC1:LVL
   discovery: false                       # (no lux: BH1750 removed, so HES:LR:LUX1 stays idle)
+  id: mqtt_client                        # referenced from lambdas to echo the message readback
+  # Temporary-message channel: the puck IOC republishes HES:LR:LCD1:MSG (a caput) to this topic,
+  # and it flashes across the whole LCD for ~10s (re-publish to refresh, empty payload clears).
+  # Absolute topic, not affected by topic_prefix. See the display lambda's override + 500ms expiry.
+  on_message:
+    - topic: "hestia/LR/puck1/msg"
+      then:
+        - lambda: |-
+            id(g_msg) = x;                                          // x = the published payload
+            id(g_msg_until) = x.empty() ? 0 : (millis() + 10000);  // ~10s hold; 0 clears it
+            // Echo what's now on screen back to .../msg/state so the IOC's HES:LR:LCD1:STAT
+            // readback reflects reality (the :VAL/:RBV "never trust a command" convention).
+            id(mqtt_client).publish("hestia/LR/puck1/msg/state", x.empty() ? std::string("IDLE") : x);
+            id(lcd).update();                                       // redraw now, don't wait for the tick
 
 # wall-clock, SNTP needs the puck's router to have internet 
 # now() is NaN-safe, and .is_valid() is false until the first sync, 
@@ -75,6 +97,15 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
+  # temporary on-screen message pushed over MQTT (see mqtt.on_message below). g_msg holds
+  # the text, and g_msg_until is the millis() timestamp it expires at (0 = no active message).
+  - id: g_msg
+    type: std::string
+    restore_value: no
+  - id: g_msg_until
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
 
 i2c:
   sda: GPIO21
@@ -119,20 +150,32 @@ interval:
                    id(s_temp).state, id(s_rh).state, id(s_pres).state,
                    id(s_sound).state);
 
-  # loud-noise flash driver, when the published sound level clears 0.75 (same
+  # loud-noise flash driver, when the published sound level clears 0.85 (same
   # arbitrary units shown on-screen), latch the alarm and toggle the blink phase every
   # 350ms, forcing an immediate LCD redraw so "SHUT UP!!!" flashes fast instead of on the
   # 5s tick, and when it falls back under, unlatch and redraw once to restore the face
   - interval: 350ms
     then:
       - lambda: |-
-          if (id(s_sound).state > 0.75f) {           // NaN before first reading -> false
+          if (id(s_sound).state > 0.85f) {           // NaN before first reading -> false
             id(g_alarm) = true;
             id(g_blink) = !id(g_blink);
             id(lcd).update();
           } else if (id(g_alarm)) {
             id(g_alarm) = false;
             id(g_blink) = false;
+            id(lcd).update();
+          }
+
+  # temporary-message expiry: once the ~10s hold elapses, clear it and redraw once so the
+  # face returns immediately instead of lingering until the next 5s display tick
+  - interval: 500ms
+    then:
+      - lambda: |-
+          if (id(g_msg_until) != 0 && millis() > id(g_msg_until)) {
+            id(g_msg_until) = 0;
+            id(g_msg).clear();
+            id(mqtt_client).publish("hestia/LR/puck1/msg/state", "IDLE");  // readback: back to idle
             id(lcd).update();
           }
 
@@ -153,6 +196,17 @@ display:
     # it.loadchar() (the only mutation API this component exposes — no create_char),
     # not via user_characters:, since that key only loads once at boot.
     lambda: |-
+      // Temporary-message override (pushed over MQTT to hestia/LR/puck1/msg). Highest
+      // priority: while a message is live, take over the whole screen, row 0 = first 16
+      // chars, row 1 = next 16, then return before the alarm/face logic. Empty payload or
+      // an elapsed hold clears it (see mqtt.on_message + the 500ms expiry interval above).
+      if (id(g_msg_until) != 0 && millis() <= id(g_msg_until)) {
+        const std::string &m = id(g_msg);
+        it.print(0, 0, m.substr(0, 16).c_str());
+        if (m.size() > 16) it.print(0, 1, m.substr(16, 16).c_str());
+        return;
+      }
+
       // Loud-noise override, while the alarm is latched (see the 350ms interval),
       // take over the whole screen and flash "SHUT UP!!!", on-phase prints it centered on
       // both rows, off-phase prints nothing (the buffer is blanked each cycle).
